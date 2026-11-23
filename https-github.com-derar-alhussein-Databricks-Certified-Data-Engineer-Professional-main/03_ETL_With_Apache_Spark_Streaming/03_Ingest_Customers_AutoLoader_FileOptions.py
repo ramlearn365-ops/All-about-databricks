@@ -1,0 +1,60 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC ## Stream Customers Data From Cloud Files to Delta Lake
+# MAGIC 1. Read files from cloud storage using DataStreamReader API
+# MAGIC 1. Transform the dataframe to add the following columns
+# MAGIC     -   file path: Cloud file path
+# MAGIC     -   ingestion date: Current Timestamp
+# MAGIC 1. Write the transformed data stream to Delta Lake Table
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 1. Read files from cloud storage using DataStreamReader API
+
+# COMMAND ----------
+
+df_customers=(
+    spark.readStream.format('cloudFiles')
+                    .option('cloudFiles.format','json')
+                    .option('cloudFiles.schemaLocation','/Volumes/gizmobox/landing/operational_data/customers_autoloader/_schema')
+                    .option('cloudFiles.inferColumnTypes',True)
+                    .option('cloudFiles.schemaHints','date_of_birth DATE,member_since DATE,created_timestamp TIMESTAMP')
+                    .option('pathGlobFilter','customers_2024_*.json')
+                    .load('/Volumes/gizmobox/landing/operational_data/customers_autoloader/')
+)
+
+df_customers.display();
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 2. Transform the dataframe to add the following columns
+# MAGIC     -   file path: Cloud file path
+# MAGIC     -   ingestion date: Current Timestamp
+
+# COMMAND ----------
+
+from pyspark.sql.functions import *
+df_trasform_customers=(df_customers.withColumn('file_path',col('_metadata.file_path'))
+                                  .withColumn('ingestion_date',current_timestamp())
+                                  )
+df_trasform_customers.display()                                 
+
+# COMMAND ----------
+
+streaming_query=(
+    df_trasform_customers.writeStream.format('delta')
+                            .option('checkpointLocation','/Volumes/gizmobox/landing/operational_data/customers_autoloader/_checkpoint_autoloader')
+                            # .trigger(once=True)
+                            .trigger(availableNow=True)
+                            .toTable('gizmobox.bronze.customers_autoloader')
+                            
+)
+
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- DROP TABLE IF EXISTS gizmobox.bronze.customers_autoloader;
+# MAGIC Select * from gizmobox.bronze.customers_autoloader
